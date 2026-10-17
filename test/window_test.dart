@@ -137,6 +137,7 @@ void main() {
       await tap(tester, id);
     }
     await tester.tap(find.byKey(const ValueKey('history button')));
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     // Kit master Apps/Calculator/History: 468 × 412, the keypad shifted by 220.
     expect(
@@ -199,11 +200,44 @@ void main() {
     expect(result, findsNothing);
     // Closing it gives the window back.
     await tester.tap(find.byKey(const ValueKey('history button')));
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(
       tester.getSize(find.byKey(const ValueKey('calculator basic'))),
       const Size(248, 412),
     );
+  });
+
+  testWidgets('the history sidebar slides on the measured timing and the toggle '
+      'stays one widget', (tester) async {
+    await pump(tester);
+    final toggle = find.byKey(const ValueKey('history button'));
+    final window = find.byKey(const ValueKey('calculator basic'));
+    double keypadLeft() => tester.getRect(key('0')).left;
+    expect(keypadLeft(), 72);
+    await tester.tap(toggle);
+    await tester.pump();
+    // The window widens at once; the content starts 40 ms later and slides for 230 ms.
+    expect(tester.getSize(window).width, 468);
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(keypadLeft(), 72);
+    await tester.pump(const Duration(milliseconds: 115));
+    expect(keypadLeft(), inExclusiveRange(72, 72 + 220));
+    expect(toggle, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 116));
+    expect(keypadLeft(), 72 + 220);
+    expect(toggle, findsOneWidget);
+    // Closing: 240 ms; the window narrows once the sidebar is out.
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(keypadLeft(), inExclusiveRange(72, 72 + 220));
+    expect(tester.getSize(window).width, 468);
+    expect(toggle, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 121));
+    expect(keypadLeft(), 72);
+    expect(tester.getSize(window).width, 248);
+    expect(toggle, findsOneWidget);
   });
 
   testWidgets('keys are flat capsules from the App/Calculator palette', (
@@ -420,6 +454,7 @@ void main() {
   testWidgets('the history sidebar keeps a drag area', (tester) async {
     await pump(tester, size: const Size(900, 600));
     await tester.tap(find.byKey(const ValueKey('history button')));
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(const ValueKey('history drag area')), findsOneWidget);
   });

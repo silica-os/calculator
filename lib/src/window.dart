@@ -80,6 +80,12 @@ class CalculatorWindowState extends State<CalculatorWindow> {
   /// The history sidebar is open (⌃⌘S): the window is 220 pt wider and the display and the
   /// keypad shift right. Not in the programmer mode, which has no history.
   bool showHistory = false;
+
+  /// Whether the window is the wide one (with the history column). The window resize itself
+  /// is instant: it widens at once when the sidebar opens (the sidebar slides in over it) and
+  /// narrows when the sidebar has slid out ([AmalfiSidebarMotion.close] later).
+  bool _wideWindow = false;
+  Timer? _narrowTimer;
   bool _wasEvaluated = false;
 
   /// The wall clock: the history groups the records by day.
@@ -116,6 +122,7 @@ class CalculatorWindowState extends State<CalculatorWindow> {
 
   @override
   void dispose() {
+    _narrowTimer?.cancel();
     _lifecycle.dispose();
     decimal.removeListener(_decimalChanged);
     programmer.removeListener(_changed);
@@ -186,7 +193,7 @@ class CalculatorWindowState extends State<CalculatorWindow> {
       extra = next;
       if (next == CalcExtra.rpn) showHistory = false;
     });
-    unawaited(requestWindowSize(_sizeOf(mode, showHistory)));
+    _syncWindow();
   }
 
   void _pickUnit(Rect anchor, bool from) {
@@ -248,7 +255,26 @@ class CalculatorWindowState extends State<CalculatorWindow> {
   void toggleHistory() {
     if (mode == CalcMode.programmer) return;
     setState(() => showHistory = !showHistory);
-    unawaited(requestWindowSize(_sizeOf(mode, showHistory)));
+    _syncWindow(slide: true);
+  }
+
+  /// Sizes the window to the history state. With [slide], a closing sidebar keeps the wide window
+  /// until it has slid out, so the content is not cut off while it moves.
+  void _syncWindow({bool slide = false}) {
+    _narrowTimer?.cancel();
+    _narrowTimer = null;
+    final wide = showHistory && mode != CalcMode.programmer;
+    if (!wide && slide && _wideWindow) {
+      _narrowTimer = Timer(AmalfiSidebarMotion.close, () {
+        _narrowTimer = null;
+        if (!mounted) return;
+        setState(() => _wideWindow = false);
+        unawaited(requestWindowSize(_sizeOf(mode, false)));
+      });
+      return;
+    }
+    setState(() => _wideWindow = wide);
+    unawaited(requestWindowSize(_sizeOf(mode, wide)));
   }
 
   NumberStyle get _style {
@@ -271,7 +297,7 @@ class CalculatorWindowState extends State<CalculatorWindow> {
       mode = next;
       extra = CalcExtra.none;
     });
-    unawaited(requestWindowSize(_sizeOf(next, showHistory)));
+    _syncWindow();
   }
 
   List<List<KeySpec>> _keys(KeyTexts texts) => switch (mode) {
@@ -603,7 +629,7 @@ class CalculatorWindowState extends State<CalculatorWindow> {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final theme = AmalfiTheme.of(context);
-    final size = _sizeOf(mode, showHistory);
+    final size = _sizeOf(mode, _wideWindow);
     final texts = KeyTexts(
       clearAll: l.keyClearAll,
       clear: l.keyClear,
@@ -618,7 +644,6 @@ class CalculatorWindowState extends State<CalculatorWindow> {
     final rpnMode = mode == CalcMode.basic && extra == CalcExtra.rpn;
     final programmerMode = mode == CalcMode.programmer;
     final sidebar = showHistory && !programmerMode && !rpnMode;
-    final dx = sidebar ? HistoryMetrics.width : 0.0;
     final error = programmerMode ? programmer.error : decimal.error;
     return SilicaMenuBar(
       menus: menus(l),
@@ -638,165 +663,181 @@ class CalculatorWindowState extends State<CalculatorWindow> {
               shadow: false,
               child: ColoredBox(
                 color: theme.colors.calculator.window,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // The window background moves the window; the toolbar, the display and the
-                    // sidebar carry their own drag areas, as these cover the background.
-                    const Positioned.fill(
-                      key: ValueKey('window drag area'),
-                      child: WindowDragArea(child: SizedBox.expand()),
-                    ),
-                    // Kit `History`: the sidebar runs under the toolbar (full height).
-                    if (sidebar) ...[
-                      Positioned(
-                        left: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: HistoryMetrics.width,
-                        child: HistorySidebar(store: history, now: _now),
-                      ),
-                    ],
-                    // Kit `Toolbar Basic|Sci|Prog`: the controls piece (the compositor draws
-                    // the window buttons there), the History toggle (not in the programmer
-                    // mode), a spacer and the Mode button.
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      child: WindowDragArea(
-                        key: const ValueKey('toolbar drag area'),
-                        child: AmalfiToolbar(
-                          surface: AmalfiToolbarSurface.none,
-                          padding: const EdgeInsets.only(right: 8),
-                          active: _active,
-                          children: [
-                            // Open, the toggle moves into the sidebar's title bar, 8 from its
-                            // edge (a 44 pt piece at x 168 of the 220 pt sidebar, as in Mail).
-                            SizedBox(
-                              width: sidebar
-                                  ? HistoryMetrics.width - historyToggleInset
-                                  : controlsWidth,
-                            ),
-                            if (!programmerMode && !rpnMode)
-                              AmalfiToolbarPiece(
-                                child: AmalfiToolbarButton(
-                                  key: const ValueKey('history button'),
-                                  semanticLabel: l.sidebarButton,
-                                  icon: const AmalfiSymbol('sidebar'),
-                                  onPressed: toggleHistory,
-                                ),
-                              ),
-                            const AmalfiSpacerPiece(),
-                            AmalfiToolbarPiece(
-                              child: Builder(
-                                key: _modeButtonKey,
-                                builder: (button) => AmalfiToolbarButton(
-                                  key: const ValueKey('mode button'),
-                                  semanticLabel: l.modeButton,
-                                  icon: const AmalfiSymbol('ellipsis'),
-                                  onPressed: () => _openModeMenu(button, l),
-                                ),
-                              ),
-                            ),
-                          ],
+                child: AmalfiSidebarRevealBuilder(
+                  visible: sidebar,
+                  builder: (context, progress) {
+                    // The sidebar slides in from the leading edge and the display, keypad and
+                    // toolbar items follow its trailing edge; a window that is not the wide
+                    // one has no slide (a mode without history).
+                    final reveal = _wideWindow ? progress : 0.0;
+                    final dx = HistoryMetrics.width * reveal;
+                    // The window is the wide one while the sidebar slides out: the content keeps
+                    // its width and so stays clear of the window's right edge.
+                    final slack = _wideWindow ? HistoryMetrics.width - dx : 0.0;
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        // The window background moves the window; the toolbar, the display and the
+                        // sidebar carry their own drag areas, as these cover the background.
+                        const Positioned.fill(
+                          key: ValueKey('window drag area'),
+                          child: WindowDragArea(child: SizedBox.expand()),
                         ),
-                      ),
-                    ),
-                    Positioned(
-                      left: displayPadding + dx,
-                      right: displayPadding,
-                      top: 0,
-                      height: top,
-                      child: WindowDragArea(
-                        key: const ValueKey('display drag area'),
-                        child: convertMode
-                            ? ConvertDisplay(
-                                from: fromUnit,
-                                to: toUnit,
-                                fromText: error
-                                    ? l.error
-                                    : decimal.mainText(_style),
-                                toText: switch (_converted()) {
-                                  final r? => formatNumber(
-                                    r,
-                                    _style,
-                                    places: decimal.places,
+                        // Kit `History`: the sidebar runs under the toolbar (full height).
+                        if (reveal > 0) ...[
+                          Positioned(
+                            left: dx - HistoryMetrics.width,
+                            top: 0,
+                            bottom: 0,
+                            width: HistoryMetrics.width,
+                            child: HistorySidebar(store: history, now: _now),
+                          ),
+                        ],
+                        // Kit `Toolbar Basic|Sci|Prog`: the controls piece (the compositor draws
+                        // the window buttons there), the History toggle (not in the programmer
+                        // mode), a spacer and the Mode button.
+                        Positioned(
+                          left: 0,
+                          right: slack,
+                          top: 0,
+                          child: WindowDragArea(
+                            key: const ValueKey('toolbar drag area'),
+                            child: AmalfiToolbar(
+                              surface: AmalfiToolbarSurface.none,
+                              padding: const EdgeInsets.only(right: 8),
+                              active: _active,
+                              children: [
+                                // Open, the toggle moves into the sidebar's title bar, 8 from its
+                                // edge (a 44 pt piece at x 168 of the 220 pt sidebar, as in Mail).
+                                SizedBox(
+                                  width:
+                                      controlsWidth +
+                                      (HistoryMetrics.width -
+                                              historyToggleInset -
+                                              controlsWidth) *
+                                          reveal,
+                                ),
+                                if (!programmerMode && !rpnMode)
+                                  AmalfiToolbarPiece(
+                                    child: AmalfiToolbarButton(
+                                      key: const ValueKey('history button'),
+                                      semanticLabel: l.sidebarButton,
+                                      icon: const AmalfiSymbol('sidebar'),
+                                      onPressed: toggleHistory,
+                                    ),
                                   ),
-                                  null => l.error,
-                                },
-                                onFromUnit: (a) => _pickUnit(a, true),
-                                onToUnit: (a) => _pickUnit(a, false),
-                                onSwap: _swapUnits,
-                              )
-                            : rpnMode
-                            ? RpnDisplay(
-                                lines: [
-                                  rpn.error
-                                      ? l.error
-                                      : rpn.lineText(
-                                          0,
+                                const AmalfiSpacerPiece(),
+                                AmalfiToolbarPiece(
+                                  child: Builder(
+                                    key: _modeButtonKey,
+                                    builder: (button) => AmalfiToolbarButton(
+                                      key: const ValueKey('mode button'),
+                                      semanticLabel: l.modeButton,
+                                      icon: const AmalfiSymbol('ellipsis'),
+                                      onPressed: () => _openModeMenu(button, l),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: displayPadding + dx,
+                          right: displayPadding + slack,
+                          top: 0,
+                          height: top,
+                          child: WindowDragArea(
+                            key: const ValueKey('display drag area'),
+                            child: convertMode
+                                ? ConvertDisplay(
+                                    from: fromUnit,
+                                    to: toUnit,
+                                    fromText: error
+                                        ? l.error
+                                        : decimal.mainText(_style),
+                                    toText: switch (_converted()) {
+                                      final r? => formatNumber(
+                                        r,
+                                        _style,
+                                        places: decimal.places,
+                                      ),
+                                      null => l.error,
+                                    },
+                                    onFromUnit: (a) => _pickUnit(a, true),
+                                    onToUnit: (a) => _pickUnit(a, false),
+                                    onSwap: _swapUnits,
+                                  )
+                                : rpnMode
+                                ? RpnDisplay(
+                                    lines: [
+                                      rpn.error
+                                          ? l.error
+                                          : rpn.lineText(
+                                              0,
+                                              _style,
+                                              places: decimal.places,
+                                            ),
+                                      for (var i = 1; i < 4; i++)
+                                        rpn.lineText(
+                                          i,
                                           _style,
                                           places: decimal.places,
                                         ),
-                                  for (var i = 1; i < 4; i++)
-                                    rpn.lineText(
-                                      i,
-                                      _style,
-                                      places: decimal.places,
-                                    ),
-                                ],
-                                onSwap: rpn.swap,
-                                onRollDown: rpn.rollDown,
-                                onRollUp: rpn.rollUp,
-                                onDrop: rpn.drop,
-                              )
-                            : Display(
-                                main: error
-                                    ? l.error
-                                    : programmerMode
-                                    ? programmer.mainText()
-                                    : decimal.mainText(_style),
-                                upper: programmerMode
-                                    ? null
-                                    : decimal.upperText(_style),
-                                suffix: programmerMode && !error
-                                    ? '${programmer.base}'
-                                    : null,
-                                indicator: programmerMode
-                                    ? programmer.character()
-                                    : mode == CalcMode.scientific &&
-                                          decimal.angle == AngleUnit.radians
-                                    ? l.radiansIndicator
-                                    : null,
-                              ),
-                      ),
-                    ),
-                    if (programmerMode)
-                      Positioned.fill(
-                        child: ProgrammerPanel(
-                          calc: programmer,
-                          showBinaryLabel: l.showBinary,
-                          hideBinaryLabel: l.hideBinary,
-                        ),
-                      ),
-                    for (var r = 0; r < rows.length; r++)
-                      for (var c = 0; c < rows[r].length; c++)
-                        Positioned(
-                          left: keypadLeft + dx + c * columnPitch(mode),
-                          top: top + r * rowPitch,
-                          child: KeyButton(
-                            id: rows[r][c].id,
-                            role: rows[r][c].role,
-                            width: width,
-                            active: _active,
-                            flash: _flash,
-                            toggled: rows[r][c].toggled,
-                            onPressed: rows[r][c].action,
-                            child: rows[r][c].label,
+                                    ],
+                                    onSwap: rpn.swap,
+                                    onRollDown: rpn.rollDown,
+                                    onRollUp: rpn.rollUp,
+                                    onDrop: rpn.drop,
+                                  )
+                                : Display(
+                                    main: error
+                                        ? l.error
+                                        : programmerMode
+                                        ? programmer.mainText()
+                                        : decimal.mainText(_style),
+                                    upper: programmerMode
+                                        ? null
+                                        : decimal.upperText(_style),
+                                    suffix: programmerMode && !error
+                                        ? '${programmer.base}'
+                                        : null,
+                                    indicator: programmerMode
+                                        ? programmer.character()
+                                        : mode == CalcMode.scientific &&
+                                              decimal.angle == AngleUnit.radians
+                                        ? l.radiansIndicator
+                                        : null,
+                                  ),
                           ),
                         ),
-                  ],
+                        if (programmerMode)
+                          Positioned.fill(
+                            child: ProgrammerPanel(
+                              calc: programmer,
+                              showBinaryLabel: l.showBinary,
+                              hideBinaryLabel: l.hideBinary,
+                            ),
+                          ),
+                        for (var r = 0; r < rows.length; r++)
+                          for (var c = 0; c < rows[r].length; c++)
+                            Positioned(
+                              left: keypadLeft + dx + c * columnPitch(mode),
+                              top: top + r * rowPitch,
+                              child: KeyButton(
+                                id: rows[r][c].id,
+                                role: rows[r][c].role,
+                                width: width,
+                                active: _active,
+                                flash: _flash,
+                                toggled: rows[r][c].toggled,
+                                onPressed: rows[r][c].action,
+                                child: rows[r][c].label,
+                              ),
+                            ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
