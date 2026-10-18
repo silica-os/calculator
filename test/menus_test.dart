@@ -86,12 +86,13 @@ void main() {
     tester,
   ) async {
     await pump(tester);
+    // Help is the standard one (silica-ui#99): the bar gives its title.
     expect(menus().map((m) => m['label']), [
       'Calculator',
       'Edit',
       'View',
       'Window',
-      'Help',
+      '',
     ]);
     expect(menus().map((m) => m['role']), [
       'app',
@@ -100,6 +101,25 @@ void main() {
       'window',
       'help',
     ]);
+    // The standard app menu: About enabled, no Settings… (Calculator has none), then the
+    // system items (silica-ui#99).
+    final app = menus().first['items'] as List;
+    expect(
+      [for (final i in app.cast<Map<Object?, Object?>>()) i['role'] ?? '—'],
+      [
+        'about',
+        '—',
+        'services',
+        '—',
+        'hide',
+        'hide_others',
+        'show_all',
+        '—',
+        'quit',
+      ],
+    );
+    expect((app.first as Map)['enabled'], isTrue);
+    expect((app.first as Map)['id'], isA<int>());
     // Edit: Copy and Paste work, the others are there disabled (CA-01).
     final edit = items('Edit').where((i) => i['separator'] != true);
     expect(

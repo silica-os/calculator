@@ -572,7 +572,7 @@ class CalculatorWindowState extends State<CalculatorWindow> {
         ],
       ),
       SilicaMenus.window(l.menuWindow, close: true),
-      SilicaMenus.help(l.menuHelp),
+      // Help is silica_ui's standard menu (silica-ui#99).
     ];
   }
 

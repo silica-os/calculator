@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:silica_ui/silica_ui.dart';
 
 import 'l10n/app_localizations.dart';
+import 'src/app_info.dart';
 import 'src/history.dart';
 import 'src/metrics.dart';
 import 'src/settings.dart';
@@ -27,6 +28,8 @@ CalcMode parseMode(List<String> args) {
 
 void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
+  // About Calculator and the standard app menu (silica-ui#99).
+  SilicaApp.info = appInfo;
   // The toolbar is unified with the window: Ossido draws only the window buttons.
   SilicaWindow.setFullSizeContent(toolbarHeight).ignore();
   // A single-window utility: it quits with its window and comes back in the same place
