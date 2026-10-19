@@ -1,0 +1,22 @@
+# The Calculator as a Silica app bundle (silica-os docs/app-bundles.md): silica-packages and
+# `cargo xtask os deploy` fill the placeholders and sign it.
+format = 1
+id = "dev.frascella.Calculator"
+name = "Calculator"
+"name.it" = "Calcolatrice"
+version = "@VERSION@"
+build = @BUILD@
+minimum_silica = "0.2.0"
+kind = "flutter"
+runtime = "dev.silica.Platform//1"
+args = ["--size", "248x412", "--title", "Calculator", "--multi-window"]
+categories = ["Utility", "Calculator"]
+keywords = ["calculator", "math", "arithmetic", "calcolatrice", "matematica", "conti"]
+
+[permissions]
+network = false
+devices = "gpu"
+
+[developer]
+name = "Silica"
+key = "@DEVELOPER_KEY@"
